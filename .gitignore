@@ -1,0 +1,16 @@
+# saidas do proprio programa
+* - preenchido.xlsx
+relatorio*.txt
+
+# arquivos de contagem (dados de campo, nao versionar)
+*.docx
+*.xlsx
+!exemplos/*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+
+# sistema
+Thumbs.db
+.DS_Store
