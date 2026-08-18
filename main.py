@@ -15,8 +15,8 @@ A planilha original nunca e alterada: o resultado sai em uma copia, com todas
 as formulas, imagens e formatacao preservadas.
 
 Uso:
-    python main.py              -> abre a interface grafica
-    python main.py --cli word.docx plan.xlsx 2,3 saida.xlsx
+    python contagem_volumetrica.py              -> abre a interface grafica
+    python contagem_volumetrica.py --cli word.docx plan.xlsx 2,3 saida.xlsx
 """
 
 import os
@@ -752,7 +752,7 @@ def abrir_interface():
             "No Windows e no Mac ele já vem com o Python.\n"
             "No Linux:  sudo apt install python3-tk\n\n"
             "Enquanto isso dá para usar pelo terminal:\n"
-            "  python main.py --cli arquivo.docx planilha.xlsx 2,3"
+            "  python contagem_volumetrica.py --cli arquivo.docx planilha.xlsx 2,3"
         )
         return
 
