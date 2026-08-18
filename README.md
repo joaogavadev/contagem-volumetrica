@@ -29,18 +29,22 @@ planilha preenchida manualmente.
 
 ## Instalação
 
-Só na primeira vez, para instalar o Python (não precisa de administrador):
+No computador do usuário, abra o **PowerShell** e cole esta linha:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File instalar.ps1
+irm https://raw.githubusercontent.com/joaogavadev/contagem-volumetrica/main/instalar.ps1 | iex
 ```
+
+Ela instala o Python se precisar, baixa o programa e cria o atalho na Área de
+Trabalho. Não precisa de administrador. **Rodar a mesma linha de novo atualiza
+o programa** para a última versão do repositório.
 
 Não há bibliotecas para instalar: o `main.py` usa apenas a biblioteca padrão
 do Python. No Linux, a interface precisa do Tkinter (`sudo apt install python3-tk`).
 
 ## Uso
 
-Clique duas vezes em `executar.bat`, ou:
+Abra pelo atalho **Contagem Volumétrica** na Área de Trabalho, ou:
 
 ```
 python main.py
@@ -96,7 +100,7 @@ costumam descartar no round-trip.
 | arquivo | o que é |
 |---|---|
 | `main.py` | o programa inteiro — leitura, contagem, escrita e interface |
-| `instalar.ps1` | instala o Python no Windows e confere os módulos |
+| `instalar.ps1` | instala o Python, baixa o programa e cria o atalho |
 | `executar.bat` | atalho para abrir a janela |
 
 ## Requisitos
