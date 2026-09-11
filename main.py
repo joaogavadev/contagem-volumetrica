@@ -15,8 +15,8 @@ A planilha original nunca e alterada: o resultado sai em uma copia, com todas
 as formulas, imagens e formatacao preservadas.
 
 Uso:
-    python contagem_volumetrica.py              -> abre a interface grafica
-    python contagem_volumetrica.py --cli word.docx plan.xlsx 2,3 saida.xlsx
+    python main.py              -> abre a interface grafica
+    python main.py --cli word.docx plan.xlsx 2,3 saida.xlsx
 """
 
 import os
@@ -30,24 +30,48 @@ from collections import Counter, OrderedDict
 # Configuracao
 # ---------------------------------------------------------------------------
 
-#: digito digitado no Word -> nome da coluna na planilha
-CODIGOS = {
-    "1": "Moto",
-    "2": "Leve",
-    "3": "Onibus",
-    "4": "Caminhao",
-    "5": "Caminhao",   # articulado somado em caminhao
+#: o que cada digito digitado no Word significa
+DIGITOS = {
+    "1": "moto",
+    "2": "leve",
+    "3": "ônibus",
+    "4": "caminhão",
+    "5": "articulado",
 }
 
-#: nome interno -> como o cabecalho aparece na planilha (com acento)
-ROTULOS = {
-    "Leve": "Leve",
-    "Onibus": "Ônibus",
-    "Caminhao": "Caminhão",
-    "Moto": "Moto",
-}
+# ---------------------------------------------------------------------------
+#  Esquemas de cabecalho
+#
+#  A planilha nem sempre tem as mesmas colunas. Ha postos com a classificacao
+#  detalhada e postos so com leve/pesado. Em vez de exigir um formato, o script
+#  le o cabecalho da aba e descobre em qual esquema ela se encaixa.
+#
+#  Cada coluna e: (chave, rotulo exibido, rotulos aceitos no cabecalho, digitos)
+#  Os esquemas sao testados em ordem: o primeiro que casar por inteiro vence,
+#  entao os mais detalhados vem primeiro.
+# ---------------------------------------------------------------------------
 
-ORDEM_TIPOS = ["Leve", "Onibus", "Caminhao", "Moto"]
+ESQUEMAS = [
+    {
+        "nome": "detalhado",
+        "colunas": [
+            ("Leve",     "Leve",     ["leve", "leves"],             ["2"]),
+            ("Onibus",   "Ônibus",   ["onibus"],                    ["3"]),
+            ("Caminhao", "Caminhão", ["caminhao", "caminhoes",
+                                      "caminhão", "pesado",
+                                      "pesados"],                   ["4", "5"]),
+            ("Moto",     "Moto",     ["moto", "motos"],             ["1"]),
+        ],
+    },
+    {
+        "nome": "leve/pesado",
+        "colunas": [
+            ("Leve",   "Leves",   ["leve", "leves"],                ["1", "2"]),
+            ("Pesado", "Pesados", ["pesado", "pesados",
+                                   "pesadas"],                      ["3", "4", "5"]),
+        ],
+    },
+]
 
 RE_HORA = re.compile(r"^\s*\d{1,2}\s*:\s*\d{2}\s*-\s*\d{1,2}\s*:\s*\d{2}\s*$")
 
@@ -166,13 +190,14 @@ def ler_word(caminho):
         horas.append(bruto.strip())
         linhas[chave] = dados
 
-    # Descarta colunas totalmente vazias no fim
-    n_cols = 0
-    for i in range(largura):
-        if any(len(d) > i and d[i] for d in linhas.values()):
-            n_cols = i + 1
+    # Descarta as colunas vazias - inclusive as do meio. Ha modelos de Word
+    # com uma coluna de separacao entre as de contagem; se ela continuasse
+    # aqui, entraria na conta e desalinharia o movimento de todas as outras.
+    usadas = [i for i in range(largura)
+              if any(len(d) > i and d[i] for d in linhas.values())]
     for chave, d in linhas.items():
-        linhas[chave] = (d + [""] * n_cols)[:n_cols]
+        linhas[chave] = [d[i] if len(d) > i else "" for i in usadas]
+    n_cols = len(usadas)
 
     if n_cols == 0:
         raise ErroDeUso("O Word não tem nenhuma sequência digitada.")
@@ -203,20 +228,27 @@ def detectar_marcadores(horas, linhas, n_cols):
 
 def contar(sequencia):
     """
-    Conta os digitos de uma celula.
-    Devolve (contagens, invalidos) - invalidos e a lista de caracteres estranhos.
+    Conta os digitos de uma celula, sem agrupar ainda.
+    Devolve ({digito: quantidade}, invalidos).
     """
-    contagens = {t: 0 for t in ORDEM_TIPOS}
+    contagens = {d: 0 for d in DIGITOS}
     invalidos = []
     for ch in sequencia:
         if ch in " \t\n\r":
             continue
-        tipo = CODIGOS.get(ch)
-        if tipo is None:
-            invalidos.append(ch)
+        if ch in contagens:
+            contagens[ch] += 1
         else:
-            contagens[tipo] += 1
+            invalidos.append(ch)
     return contagens, invalidos
+
+
+def agrupar(por_digito, esquema):
+    """Soma os digitos nas colunas que a planilha daquela aba tem."""
+    return dict(
+        (chave, sum(por_digito[d] for d in digitos))
+        for chave, _rot, _aceitos, digitos in esquema["colunas"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -351,16 +383,30 @@ def ler_xlsx(caminho):
         if linha_cab is None:
             continue  # nao e aba de movimento
 
-        # cabecalhos Leve / Onibus / Caminhao / Moto
-        colunas = {}
-        for tipo in ORDEM_TIPOS:
-            alvo_rot = norm_rotulo(ROTULOS[tipo])
-            for n in range(col_para_num(col_hora) + 1, col_para_num(col_hora) + 12):
-                ref = num_para_col(n) + str(linha_cab)
-                if norm_rotulo(valores.get(ref, "")) == alvo_rot:
-                    colunas[tipo] = num_para_col(n)
-                    break
-        if len(colunas) < 4:
+        # Em qual esquema esta aba se encaixa? As colunas podem estar em
+        # qualquer posicao depois da HORA, inclusive com buracos no meio
+        # (ha planilhas com "Leves" em C e "Pesados" em E).
+        col_ini = col_para_num(col_hora) + 1
+        cabecalho = {}
+        for n in range(col_ini, col_ini + 12):
+            letra = num_para_col(n)
+            rot = norm_rotulo(valores.get(letra + str(linha_cab), ""))
+            if rot and rot != "-":
+                cabecalho[letra] = rot
+
+        esquema = colunas = None
+        for cand in ESQUEMAS:
+            achadas = {}
+            for chave, _rot, aceitos, _dig in cand["colunas"]:
+                for letra, rot in sorted(cabecalho.items(), key=lambda x: col_para_num(x[0])):
+                    if rot in aceitos and letra not in achadas.values():
+                        achadas[chave] = letra
+                        break
+            if len(achadas) == len(cand["colunas"]):
+                esquema, colunas = cand, achadas
+                break
+        if esquema is None:
+            aba["cabecalho_lido"] = cabecalho
             continue
 
         # numero do movimento: celula a direita do rotulo "Movimento"
@@ -416,6 +462,7 @@ def ler_xlsx(caminho):
             movimento=str(movimento),
             linha_cab=linha_cab,
             col_hora=col_hora,
+            esquema=esquema,
             colunas=colunas,
             horas=horas,
             estilos=estilos,
@@ -423,9 +470,23 @@ def ler_xlsx(caminho):
         movimentos.append(aba)
 
     if not movimentos:
+        # Mostra o que foi lido de fato: quase sempre o problema e um
+        # cabecalho diferente, e sem isso a mensagem nao ajuda ninguem.
+        achados = []
+        for aba in abas:
+            cab = aba.get("cabecalho_lido")
+            if cab:
+                achados.append("   aba \"%s\": %s" % (
+                    aba["nome"],
+                    " | ".join(cab[l] for l in sorted(cab, key=col_para_num)) or "(vazio)"))
+        detalhe = ("\n\nCabeçalhos encontrados:\n" + "\n".join(achados)) if achados else ""
+        esperados = "\n".join(
+            "   %s: %s" % (e["nome"], " | ".join(c[1] for c in e["colunas"]))
+            for e in ESQUEMAS)
         raise ErroDeUso(
             "Nenhuma aba de movimento encontrada na planilha.\n"
-            "Esperado uma aba com 'HORA' e as colunas Leve / Ônibus / Caminhão / Moto."
+            "A aba precisa ter 'HORA' e um destes conjuntos de colunas:\n"
+            + esperados + detalhe
         )
     return movimentos
 
@@ -558,6 +619,16 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
         rel.add("-" * 66)
         rel.contexto = "mov %s" % numero
 
+        esquema = aba["esquema"]
+        tipos = [c[0] for c in esquema["colunas"]]
+        rotulo = dict((c[0], c[1]) for c in esquema["colunas"])
+        if esquema is not ESQUEMAS[0]:
+            rel.add("Classificação da planilha .: %s  (esquema %s)" % (
+                " + ".join(
+                    "%s = %s" % (c[1], "/".join(DIGITOS[d] for d in c[3]))
+                    for c in esquema["colunas"]),
+                esquema["nome"]))
+
         # A celula curta antes do inicio da contagem e o rotulo do movimento,
         # nao veiculo. So confirmo como rotulo se o numero existir na planilha.
         marcador = marcadores[indice] if indice < len(marcadores) else None
@@ -571,7 +642,8 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
 
         edicoes = {}
         escritos = ignorados = 0
-        soma = {t: 0 for t in ORDEM_TIPOS}
+        soma = dict((t, 0) for t in tipos)
+        soma_digitos = dict((d, 0) for d in DIGITOS)
 
         for hora_txt in horas_word:
             chave = norm_hora(hora_txt)
@@ -581,7 +653,8 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
             if not sequencia.strip():
                 continue
 
-            contagens, invalidos = contar(sequencia)
+            por_digito, invalidos = contar(sequencia)
+            contagens = agrupar(por_digito, esquema)
             if invalidos:
                 rel.aviso("%s: caractere inválido %s (ignorado)"
                           % (hora_txt, " ".join(sorted(set(invalidos)))))
@@ -591,7 +664,7 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
                           "(%s dígitos) — confira se é tudo do mesmo intervalo"
                           % (hora_txt, len(pedacos),
                              "+".join(str(len(p.strip())) for p in pedacos)))
-            total_veiculos = sum(contagens.values())
+            total_veiculos = sum(por_digito.values())
             if 0 < total_veiculos < 5:
                 rel.aviso("%s: só %d veículo(s) no intervalo inteiro — "
                           "parece digitação de teste, confira"
@@ -605,7 +678,7 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
             # ja preenchido na planilha?
             atual = {}
             ocupada = False
-            for tipo in ORDEM_TIPOS:
+            for tipo in tipos:
                 ref = aba["colunas"][tipo] + str(linha)
                 bruto = aba["valores"].get(ref, "")
                 if bruto not in ("", None):
@@ -617,8 +690,8 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
 
             if ocupada:
                 difs = [
-                    "%s %s->%s" % (ROTULOS[t], atual.get(t, 0), contagens[t])
-                    for t in ORDEM_TIPOS if atual.get(t, 0) != contagens[t]
+                    "%s %s->%s" % (rotulo[t], atual.get(t, 0), contagens[t])
+                    for t in tipos if atual.get(t, 0) != contagens[t]
                 ]
                 if difs:
                     rel.divergencia("%s: %s" % (hora_txt, "  ".join(difs)))
@@ -626,13 +699,15 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
                     ignorados += 1
                     continue
 
-            for tipo in ORDEM_TIPOS:
+            for tipo in tipos:
                 ref = aba["colunas"][tipo] + str(linha)
                 cheio, vazio = aba["estilos"].get(tipo, (None, None))
                 edicoes.setdefault(linha, []).append(
                     (ref, contagens[tipo], cheio if cheio is not None else vazio)
                 )
                 soma[tipo] += contagens[tipo]
+            for d in DIGITOS:
+                soma_digitos[d] += por_digito[d]
             escritos += 1
 
         if edicoes:
@@ -649,8 +724,14 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
         if ignorados:
             rel.add("Já preenchidos, mantidos .: %d" % ignorados)
         rel.add("Total contado ............: %s   (%d veículos)"
-                % ("  ".join("%s %d" % (ROTULOS[t], soma[t]) for t in ORDEM_TIPOS),
+                % ("  ".join("%s %d" % (rotulo[t], soma[t]) for t in tipos),
                    sum(soma.values())))
+        if esquema is not ESQUEMAS[0] and sum(soma_digitos.values()):
+            # A planilha agrupa, mas o Word tem o detalhe. Mostra assim mesmo:
+            # nao custa nada e as vezes e o que a pessoa precisa saber.
+            rel.add("   detalhe do Word .......: %s" % "  ".join(
+                "%s %d" % (DIGITOS[d], soma_digitos[d])
+                for d in sorted(DIGITOS) if soma_digitos[d]))
         rel.add("")
         total_escrito += escritos
 
@@ -752,7 +833,7 @@ def abrir_interface():
             "No Windows e no Mac ele já vem com o Python.\n"
             "No Linux:  sudo apt install python3-tk\n\n"
             "Enquanto isso dá para usar pelo terminal:\n"
-            "  python contagem_volumetrica.py --cli arquivo.docx planilha.xlsx 2,3"
+            "  python main.py --cli arquivo.docx planilha.xlsx 2,3"
         )
         return
 
@@ -856,8 +937,12 @@ def abrir_interface():
         # caminho de excecao: faltou algum, pergunta
         caixa2.pack(fill="x", pady=(12, 0), after=caixa)
         faltando = [str(i + 1) for i in range(n_cols) if i not in automatico]
-        dica.config(text="Não achei o número do movimento na coluna %s do Word. "
-                         "Confira abaixo." % ", ".join(faltando))
+        if len(faltando) == 1:
+            alvo = "na coluna %s" % faltando[0]
+        else:
+            alvo = "nas colunas %s e %s" % (", ".join(faltando[:-1]), faltando[-1])
+        dica.config(text="Não achei o número do movimento %s do Word. "
+                         "Confira abaixo." % alvo)
 
         for i in range(n_cols):
             marcado = marcadores[i][1] if (marcadores[i]

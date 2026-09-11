@@ -21,7 +21,22 @@ passam:
 | `2` | leve |
 | `3` | ônibus |
 | `4` | caminhão |
-| `5` | articulado — somado dentro de caminhão |
+| `5` | articulado |
+
+### Cabeçalhos aceitos
+
+A planilha nem sempre traz as mesmas colunas. O script lê o cabeçalho da aba e
+descobre sozinho em qual esquema ela se encaixa:
+
+| esquema | colunas da planilha | agrupamento |
+|---|---|---|
+| detalhado | Leve · Ônibus · Caminhão · Moto | caminhão = `4` + `5` |
+| leve/pesado | Leves · Pesados | Leves = `1` + `2` · Pesados = `3` + `4` + `5` |
+
+As colunas podem estar em qualquer posição depois da `HORA`, inclusive com
+colunas vazias entre elas. Quando a planilha agrupa, o relatório mostra o
+detalhe por tipo assim mesmo — o dado está no Word, mesmo que não caiba na
+planilha.
 
 Contar isso à mão e transcrever para a planilha é lento e erra. Na validação
 inicial, **27 de 56 intervalos** de um posto real estavam com o total errado na
