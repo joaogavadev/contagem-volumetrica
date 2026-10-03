@@ -58,9 +58,18 @@ ESQUEMAS = [
             ("Leve",     "Leve",     ["leve", "leves"],             ["2"]),
             ("Onibus",   "Ônibus",   ["onibus"],                    ["3"]),
             ("Caminhao", "Caminhão", ["caminhao", "caminhoes",
-                                      "caminhão", "pesado",
-                                      "pesados"],                   ["4", "5"]),
+                                      "pesado", "pesados"],         ["4", "5"]),
             ("Moto",     "Moto",     ["moto", "motos"],             ["1"]),
+        ],
+    },
+    {
+        # Sem coluna de moto: a moto entra junto com o leve.
+        "nome": "sem moto",
+        "colunas": [
+            ("Leve",     "Leve",     ["leve", "leves"],             ["1", "2"]),
+            ("Onibus",   "Ônibus",   ["onibus"],                    ["3"]),
+            ("Caminhao", "Caminhão", ["caminhao", "caminhoes",
+                                      "pesado", "pesados"],         ["4", "5"]),
         ],
     },
     {
@@ -277,6 +286,22 @@ def num_para_col(n):
 
 
 def _desescapar(txt):
+    """
+    Desfaz o escape do XML. Alem das entidades nomeadas, trata as numericas
+    (&#212; &#xD4;): o Excel e varias bibliotecas gravam os acentos assim,
+    e sem isso "Ônibus" nunca casaria com o cabecalho esperado.
+    """
+    if "&" not in txt:
+        return txt
+
+    def _num(m, base):
+        try:
+            return chr(int(m.group(1), base))
+        except (ValueError, OverflowError):
+            return m.group(0)
+
+    txt = re.sub(r"&#x([0-9a-fA-F]+);", lambda m: _num(m, 16), txt)
+    txt = re.sub(r"&#(\d+);", lambda m: _num(m, 10), txt)
     return (
         txt.replace("&lt;", "<").replace("&gt;", ">")
         .replace("&quot;", '"').replace("&apos;", "'")
@@ -347,12 +372,19 @@ def ler_xlsx(caminho):
                 "Confira se você não trocou o Word com a planilha."
             )
 
+        # Os atributos de <Relationship> vem em ordens diferentes conforme o
+        # programa que gerou o arquivo, entao le um por um em vez de supor
+        # uma ordem fixa.
         alvo = {}
-        for m in re.finditer(r'<Relationship Id="([^"]+)"[^>]*Target="([^"]+)"', rels):
-            alvo[m.group(1)] = m.group(2)
+        for m in re.finditer(r"<Relationship\b[^>]*>", rels):
+            tag = m.group(0)
+            rid = re.search(r'Id="([^"]+)"', tag)
+            destino = re.search(r'Target="([^"]+)"', tag)
+            if rid and destino:
+                alvo[rid.group(1)] = destino.group(1)
 
         abas = []
-        for m in re.finditer(r"<sheet\b[^>]*/>", wb):
+        for m in re.finditer(r"<sheet\b[^>]*>", wb):
             tag = m.group(0)
             nome = re.search(r'name="([^"]*)"', tag)
             rid = re.search(r'r:id="([^"]*)"', tag)
@@ -361,7 +393,9 @@ def ler_xlsx(caminho):
             destino = alvo.get(rid.group(1), "")
             if not destino:
                 continue
-            arq = "xl/" + destino.lstrip("/")
+            # Target pode vir relativo a xl/ ou absoluto a partir da raiz
+            # do pacote ("/xl/worksheets/sheet1.xml").
+            arq = destino[1:] if destino.startswith("/") else "xl/" + destino
             try:
                 xml = z.read(arq).decode("utf-8")
             except KeyError:
@@ -386,12 +420,18 @@ def ler_xlsx(caminho):
         # Em qual esquema esta aba se encaixa? As colunas podem estar em
         # qualquer posicao depois da HORA, inclusive com buracos no meio
         # (ha planilhas com "Leves" em C e "Pesados" em E).
+        #
+        # A coluna "-" fecha o bloco de contagem. Parar nela importa: logo
+        # depois vem o bloco de saltos, que tem cabecalho na mesma linha e
+        # poluia a leitura ("Salto Incio", "Salto Fim"...).
         col_ini = col_para_num(col_hora) + 1
         cabecalho = {}
         for n in range(col_ini, col_ini + 12):
             letra = num_para_col(n)
             rot = norm_rotulo(valores.get(letra + str(linha_cab), ""))
-            if rot and rot != "-":
+            if rot == "-":
+                break
+            if rot:
                 cabecalho[letra] = rot
 
         esquema = colunas = None
