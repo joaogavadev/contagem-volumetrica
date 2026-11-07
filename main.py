@@ -63,6 +63,31 @@ ESQUEMAS = [
         ],
     },
     {
+        # Caminhao separado em unitario (4) e articulado (5).
+        "nome": "unitário/articulado",
+        "colunas": [
+            ("Leve",       "Leve",                ["leve", "leves"],        ["2"]),
+            ("Onibus",     "Ônibus",              ["onibus"],               ["3"]),
+            ("Unitario",   "Caminhão Unitário",   ["caminhao unitario",
+                                                   "unitario"],             ["4"]),
+            ("Articulado", "Caminhão Articulado", ["caminhao articulado",
+                                                   "articulado"],           ["5"]),
+            ("Moto",       "Moto",                ["moto", "motos"],        ["1"]),
+        ],
+    },
+    {
+        # Igual ao anterior, sem coluna de moto: a moto entra junto com o leve.
+        "nome": "unitário/articulado sem moto",
+        "colunas": [
+            ("Leve",       "Leve",                ["leve", "leves"],        ["1", "2"]),
+            ("Onibus",     "Ônibus",              ["onibus"],               ["3"]),
+            ("Unitario",   "Caminhão Unitário",   ["caminhao unitario",
+                                                   "unitario"],             ["4"]),
+            ("Articulado", "Caminhão Articulado", ["caminhao articulado",
+                                                   "articulado"],           ["5"]),
+        ],
+    },
+    {
         # Sem coluna de moto: a moto entra junto com o leve.
         "nome": "sem moto",
         "colunas": [
@@ -685,12 +710,19 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
         soma = dict((t, 0) for t in tipos)
         soma_digitos = dict((d, 0) for d in DIGITOS)
 
+        rotulos_repetidos = 0
         for hora_txt in horas_word:
             chave = norm_hora(hora_txt)
             if chave == rotulo_em:
                 continue
             sequencia = linhas_word[chave][indice]
             if not sequencia.strip():
+                continue
+            # Ha Words que repetem o numero do movimento antes de cada bloco
+            # contado (contagem em quartos de hora alternados). Essa celula e
+            # rotulo, nao veiculo: se fosse contada, viraria 1 moto/leve/etc.
+            if rotulo_em is not None and sequencia.strip() == marcador[1]:
+                rotulos_repetidos += 1
                 continue
 
             por_digito, invalidos = contar(sequencia)
@@ -761,6 +793,9 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
                       "(não preenchidos)" % len(faltando))
 
         rel.add("Intervalos preenchidos ...: %d" % escritos)
+        if rotulos_repetidos:
+            rel.add("Rótulo repetido, ignorado : %d  (célula só com '%s')"
+                    % (rotulos_repetidos, marcador[1]))
         if ignorados:
             rel.add("Já preenchidos, mantidos .: %d" % ignorados)
         rel.add("Total contado ............: %s   (%d veículos)"
@@ -990,7 +1025,8 @@ def abrir_interface():
             # so desconta a celula do rotulo se ela foi confirmada como rotulo
             cheias = [h for h in horas
                       if linhas[norm_hora(h)][i].strip()
-                      and (marcado is None or norm_hora(h) != marcadores[i][0])]
+                      and (marcado is None
+                           or linhas[norm_hora(h)][i].strip() != marcado)]
             amostra = ""
             if cheias:
                 # mostra o intervalo mais movimentado: e o mais representativo

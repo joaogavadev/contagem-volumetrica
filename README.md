@@ -31,6 +31,9 @@ descobre sozinho em qual esquema ela se encaixa:
 | esquema | colunas da planilha | agrupamento |
 |---|---|---|
 | detalhado | Leve · Ônibus · Caminhão · Moto | caminhão = `4` + `5` |
+| sem moto | Leve · Ônibus · Caminhão | Leve = `1` + `2` · caminhão = `4` + `5` |
+| unitário/articulado | Leve · Ônibus · Caminhão Unitário · Caminhão Articulado · Moto | unitário = `4` · articulado = `5` |
+| unitário/articulado sem moto | Leve · Ônibus · Caminhão Unitário · Caminhão Articulado | Leve = `1` + `2` · unitário = `4` · articulado = `5` |
 | leve/pesado | Leves · Pesados | Leves = `1` + `2` · Pesados = `3` + `4` + `5` |
 
 As colunas podem estar em qualquer posição depois da `HORA`, inclusive com
@@ -71,7 +74,9 @@ python main.py
 
 O movimento de cada coluna sai do **número solto escrito na primeira linha
 preenchida** do Word, antes do início da contagem. Se ele não bater com
-nenhuma aba da planilha, o programa pergunta em vez de chutar.
+nenhuma aba da planilha, o programa pergunta em vez de chutar. Se o Word
+repetir esse número antes de cada bloco contado, essas células também são
+tratadas como rótulo e não entram na contagem.
 
 ### Sem interface
 
