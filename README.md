@@ -78,6 +78,11 @@ nenhuma aba da planilha, o programa pergunta em vez de chutar. Se o Word
 repetir esse número antes de cada bloco contado, essas células também são
 tratadas como rótulo e não entram na contagem.
 
+**A planilha é quem manda.** Coluna do Word marcada com um movimento que não
+tem aba na planilha (ex.: Word com movimentos 1, 2 e 3 e planilha só com o 1)
+é ignorada e aparece no relatório. Se ela tiver veículos, o relatório avisa
+quantos ficaram de fora.
+
 ### Sem interface
 
 ```

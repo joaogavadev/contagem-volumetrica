@@ -260,6 +260,25 @@ def detectar_marcadores(horas, linhas, n_cols):
     return marcadores
 
 
+def colunas_fora_da_planilha(marcadores, numeros):
+    """
+    Colunas do Word marcadas com um movimento que nao existe na planilha.
+    Sao ignoradas: o Word as vezes traz colunas de movimentos que nao foram
+    contados naquele posto (so o rotulo e zeros), e a planilha e quem manda.
+    """
+    return [i for i, mk in enumerate(marcadores) if mk and mk[1] not in numeros]
+
+
+def veiculos_na_coluna(horas, linhas, indice, rotulo):
+    """Quantos veiculos validos uma coluna tem, sem contar as celulas de rotulo."""
+    total = 0
+    for h in horas:
+        seq = linhas[norm_hora(h)][indice].strip()
+        if seq and seq != rotulo:
+            total += sum(contar(seq)[0].values())
+    return total
+
+
 def contar(sequencia):
     """
     Conta os digitos de uma celula, sem agrupar ainda.
@@ -668,6 +687,20 @@ def processar(caminho_word, caminho_xlsx, destino, mapeamento, sobrescrever=Fals
     novos_xml = {}
     total_escrito = 0
 
+    for i in colunas_fora_da_planilha(marcadores, por_numero):
+        if i in mapeamento:
+            continue
+        mov = marcadores[i][1]
+        qtd = veiculos_na_coluna(horas_word, linhas_word, i, mov)
+        rel.add("COLUNA %d DO WORD  ->  ignorada (movimento %s não existe na planilha)"
+                % (i + 1, mov))
+        if qtd:
+            rel.aviso("coluna %d do Word (movimento %s) tem %d veículo(s) e foi "
+                      "ignorada: a planilha não tem aba para esse movimento"
+                      % (i + 1, mov, qtd))
+    if any(i not in mapeamento for i in colunas_fora_da_planilha(marcadores, por_numero)):
+        rel.add("")
+
     for indice in sorted(mapeamento):
         numero = str(mapeamento[indice]).strip()
         aba = por_numero.get(numero)
@@ -875,12 +908,20 @@ def movimentos_do_word(caminho_word, caminho_xlsx):
     """Mapeamento coluna -> movimento lido dos rotulos do proprio Word."""
     _, _, n_cols, marcadores = ler_word(caminho_word)
     numeros = {m["movimento"] for m in ler_xlsx(caminho_xlsx)}
+    fora = colunas_fora_da_planilha(marcadores, numeros)
     mapeamento = {}
     for i in range(n_cols):
         if marcadores[i] and marcadores[i][1] in numeros:
             mapeamento[i] = marcadores[i][1]
-    if len(mapeamento) < n_cols:
-        faltando = [str(i + 1) for i in range(n_cols) if i not in mapeamento]
+    faltando = [str(i + 1) for i in range(n_cols)
+                if i not in mapeamento and i not in fora]
+    if not mapeamento and not faltando:
+        raise ErroDeUso(
+            "Nenhuma coluna do Word é de um movimento que existe na planilha.\n"
+            "Movimentos no Word: %s\nMovimentos na planilha: %s"
+            % (", ".join(marcadores[i][1] for i in fora),
+               ", ".join(sorted(numeros))))
+    if faltando:
         raise ErroDeUso(
             "Não consegui ler o movimento da(s) coluna(s) %s no Word.\n"
             "Informe os movimentos na ordem das colunas, ex: 2,3"
@@ -992,7 +1033,7 @@ def abrir_interface():
         estado["campos"] = []
         estado["mapa"] = None
         caixa2.pack_forget()
-        resumo.config(text="")
+        resumo.config(text="", foreground="#555")
         if not (estado["dados"] and estado["movs"]):
             return
         horas, linhas, n_cols, marcadores = estado["dados"]
@@ -1003,15 +1044,31 @@ def abrir_interface():
         for i in range(n_cols):
             if marcadores[i] and marcadores[i][1] in numeros:
                 automatico[i] = marcadores[i][1]
-        if len(automatico) == n_cols:
+
+        # colunas de movimento que a planilha nao tem: ficam de fora
+        fora = colunas_fora_da_planilha(marcadores, numeros)
+        nota_fora = ""
+        if fora:
+            nota_fora = "\nIgnoradas (movimento não existe na planilha): " + "   ".join(
+                "coluna %d → %s" % (i + 1, marcadores[i][1]) for i in fora)
+        pedir = [i for i in range(n_cols) if i not in automatico and i not in fora]
+
+        if not pedir:
+            if not automatico:
+                resumo.config(text="Nenhuma coluna do Word é de um movimento "
+                                   "que existe na planilha." + nota_fora,
+                              foreground="#b00")
+                return
             estado["mapa"] = automatico
             resumo.config(text="Movimentos: " + "   ".join(
-                "coluna %d → %s" % (i + 1, automatico[i]) for i in sorted(automatico)))
+                "coluna %d → %s" % (i + 1, automatico[i]) for i in sorted(automatico))
+                + nota_fora, foreground="#555")
             return
 
         # caminho de excecao: faltou algum, pergunta
+        resumo.config(text=nota_fora.strip(), foreground="#555")
         caixa2.pack(fill="x", pady=(12, 0), after=caixa)
-        faltando = [str(i + 1) for i in range(n_cols) if i not in automatico]
+        faltando = [str(i + 1) for i in pedir]
         if len(faltando) == 1:
             alvo = "na coluna %s" % faltando[0]
         else:
@@ -1020,6 +1077,8 @@ def abrir_interface():
                          "Confira abaixo." % alvo)
 
         for i in range(n_cols):
+            if i in fora:
+                continue
             marcado = marcadores[i][1] if (marcadores[i]
                                            and marcadores[i][1] in numeros) else None
             # so desconta a celula do rotulo se ela foi confirmada como rotulo
@@ -1047,7 +1106,7 @@ def abrir_interface():
             combo = ttk.Combobox(grade, textvariable=var, values=numeros,
                                  width=6, state="normal")
             combo.grid(row=i, column=3, sticky="e", padx=(6, 2))
-            estado["campos"].append(var)
+            estado["campos"].append((i, var))
         grade.columnconfigure(1, weight=1)
 
     # --- passo 3: rodar ----------------------------------------------------
@@ -1072,10 +1131,15 @@ def abrir_interface():
                                    "Escolha o Word e a planilha primeiro.")
             return
         mapeamento = estado.get("mapa")
+        if not mapeamento and not estado["campos"]:
+            messagebox.showwarning(
+                "Nada para preencher",
+                "Nenhuma coluna do Word é de um movimento que existe na planilha.")
+            return
         if not mapeamento:
             mapeamento = {}
             vistos = {}
-            for i, var in enumerate(estado["campos"]):
+            for i, var in estado["campos"]:
                 v = var.get().strip()
                 if not v:
                     messagebox.showwarning(
